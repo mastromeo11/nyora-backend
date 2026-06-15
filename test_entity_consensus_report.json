@@ -1,0 +1,10 @@
+{
+    "passed_tests": 1,
+    "total_tests": 1,
+    "top1_accuracy": 1.0,
+    "grounding_validation_rate": 1.0,
+    "context_pollution_rate": 0.0,
+    "entity_consensus_accuracy": 1.0,
+    "latency_seconds": 30.336545944213867,
+    "confidence_score": 1.0
+}

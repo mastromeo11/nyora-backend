@@ -1,0 +1,13 @@
+{
+    "test_1_single_hop_accuracy": 1.0,
+    "test_2_multi_hop_accuracy": 1.0,
+    "test_3_temporal_accuracy": 1.0,
+    "test_4_community_accuracy": 1.0,
+    "test_5_migration_accuracy": 1.0,
+    "test_6_cache_efficiency": 1.0,
+    "test_7_pruner_accuracy": 1.0,
+    "test_8_api_accuracy": 1.0,
+    "test_9_grounding_accuracy": 1.0,
+    "pruning_efficiency": 1.0,
+    "cache_hit_rate": 0.5
+}

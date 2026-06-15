@@ -1,0 +1,12 @@
+{
+    "goal_accuracy": 1.0,
+    "reflection_accuracy": 1.0,
+    "replanning_accuracy": 1.0,
+    "trace_cache_hit_rate": 0.5,
+    "average_latency": 18.3085,
+    "grounding_validation_rate": 1.0,
+    "tool_success_rate": 0.8333,
+    "graph_node_count": 29,
+    "passed_tests": 7,
+    "total_tests": 7
+}

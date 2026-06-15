@@ -1,0 +1,13 @@
+{
+    "followup_resolution_accuracy": 1.0,
+    "entity_memory_accuracy": 1.0,
+    "session_summary_accuracy": 1.0,
+    "memory_graph_nodes": 18,
+    "average_latency": 7.103989982604981,
+    "memory_hit_rate": 0.2222,
+    "grounding_validation_rate": 1.0,
+    "summary_count": 1,
+    "entity_decay_events": 0,
+    "cache_hits": 8,
+    "average_memory_latency_ms": 8044.6941
+}

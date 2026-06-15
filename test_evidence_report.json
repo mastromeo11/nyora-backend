@@ -1,0 +1,11 @@
+{
+    "passed_tests": 7,
+    "total_tests": 7,
+    "top1_accuracy": 1.0,
+    "top3_accuracy": 1.0,
+    "consensus_accuracy": 1.0,
+    "grounding_validation_rate": 1.0,
+    "average_response_latency": 34.161256074905396,
+    "evidence_graph_size": 10,
+    "average_confidence": 0.7427999999999999
+}

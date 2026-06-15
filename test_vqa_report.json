@@ -1,0 +1,9 @@
+{
+    "passed_tests": 9,
+    "total_tests": 9,
+    "top1_accuracy": 1.0,
+    "top3_accuracy": 1.0,
+    "cache_hit_rate": 0.5,
+    "average_clip_score": 0.45885204076766967,
+    "average_response_time": 3.568866014480591
+}
