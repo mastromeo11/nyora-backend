@@ -6,7 +6,9 @@ from app.config import (
     ENABLE_MULTI_AGENT_SWARM,
     MAX_SWARM_STEPS,
     SWARM_TIMEOUT_SECONDS,
-    ENABLE_CRITIC_AGENT
+    ENABLE_CRITIC_AGENT,
+    ENABLE_EPISODIC_MEMORY,
+    ENABLE_SIMULATION_ENGINE
 )
 from app.swarm.agents.planner_agent import PlannerAgent
 from app.swarm.agents.retrieval_agent import RetrievalAgent
@@ -33,6 +35,8 @@ class SwarmManager:
     def execute_swarm_query(self, query: str) -> Dict[str, Any]:
         """
         Orchestrates swarm task delegation, execution, criticism, negotiation, and grounding validation.
+        Enforces sequence:
+        Memory -> Learning -> Episodes -> Experience Replay -> World State Builder -> Simulation Engine -> Policy Simulation -> Branch Ranking -> Planner -> Swarm -> Retrieval -> Grounding
         """
         t_start = time.time()
         clear_shared_memory()
@@ -115,11 +119,25 @@ class SwarmManager:
         
         evidence_nodes = [EvidenceNode(**e) for e in ret_evidence]
         
+        # Retrieve Episodic Memory context
+        episodic_context = None
+        if ENABLE_EPISODIC_MEMORY:
+            from app.episodic.episodic_retriever import retrieve_episodic_context
+            episodic_context = retrieve_episodic_context(query)
+            
+        # Retrieve Simulation context
+        simulation_context = None
+        if ENABLE_SIMULATION_ENGINE:
+            from app.simulation.simulation_retriever import retrieve_simulation_context
+            simulation_context = retrieve_simulation_context(query)
+            
         context = build_context(
             ranked_evidence=evidence_nodes,
             query=query,
             kg_context=kg_context,
-            learning_context=learn_res.get("learning_context")
+            learning_context=learn_res.get("learning_context"),
+            episodic_context=episodic_context,
+            simulation_context=simulation_context
         )
         
         if agreed_fact:
@@ -152,7 +170,110 @@ class SwarmManager:
         
         from app.swarm.swarm_explanation_engine import compile_swarm_explanation
         explanation = compile_swarm_explanation(history)
+        if ENABLE_EPISODIC_MEMORY and episodic_context:
+            from app.episodic.episodic_explanation_engine import compile_episodic_explanation
+            epis_expl = compile_episodic_explanation(episodic_context.get("replays", []))
+            if epis_expl:
+                explanation = epis_expl + "\n" + explanation
+                
+        if ENABLE_SIMULATION_ENGINE:
+            try:
+                from app.simulation.simulation_explanation_engine import compile_simulation_explanation
+                from app.simulation.simulation_store import get_scenarios, get_failure_forecasts
+                sim_expl = compile_simulation_explanation(get_scenarios(), get_failure_forecasts())
+                if sim_expl:
+                    explanation = sim_expl + "\n" + explanation
+            except Exception as e:
+                print(f"[SWARM SIMULATION] Error generating explanation: {e}")
+                
+        # Evolve episodic memory
+        if ENABLE_EPISODIC_MEMORY:
+            try:
+                from app.episodic.episode_builder import build_and_store_episode
+                from app.episodic.temporal_memory_engine import update_temporal_chains
+                from app.episodic.episode_cluster_engine import cluster_episode
+                from app.episodic.experience_replay_engine import record_replay
+                from app.episodic.memory_decay_engine import decay_episodic_memory
+                from app.episodic.memory_pruner import prune_episodic_memory
+                from app.config import ENABLE_MEMORY_DECAY, ENABLE_MEMORY_PRUNER, EPISODE_PRUNE_INTERVAL
+                from app.retrieval.memory_metrics import get_total_queries
+                
+                success = "not available" not in final_answer.lower()
+                
+                ep_node, exp_node = build_and_store_episode(
+                    query=query,
+                    answer=final_answer,
+                    confidence_label_or_score=consensus_score,
+                    grounding_report=None,
+                    user_signal=1.0,
+                    experience_type="swarm_collaboration",
+                    supporting_evidence_ids=[e.get("evidence_id") for e in ret_evidence if e.get("evidence_id")],
+                    planner_trace_ids=["planner"],
+                    critic_trace_ids=["critic"],
+                    consensus_trace_ids=["consensus"],
+                    agent_ids=["planner", "retrieval", "kg", "learning", "vqa", "grounding", "critic"],
+                    tools_used=vqa_res.get("executed_tools", []) or [],
+                    observation_ids=[],
+                    reflection_ids=[],
+                    consensus_ids=[collab_id],
+                    success_status=success,
+                    execution_latency=(time.time() - t_start) * 1000.0
+                )
+                
+                if ep_node:
+                    update_temporal_chains(ep_node)
+                    cluster_episode(ep_node)
+                    
+                    # Record reinforcement replays
+                    for old_ep in episodic_context.get("episodes", []):
+                        record_replay(old_ep.episode_id, ep_node.episode_id, 0.9, 1.0)
+                        
+                if ENABLE_MEMORY_DECAY:
+                    decay_episodic_memory()
+                    
+                tq = get_total_queries()
+                if ENABLE_MEMORY_PRUNER and tq > 0 and tq % EPISODE_PRUNE_INTERVAL == 0:
+                    prune_episodic_memory()
+            except Exception as e:
+                print(f"[SWARM EPISODIC] Error during episodic memory storage: {e}")
+                
+        # Simulation database updates, decay, and pruner
+        if ENABLE_SIMULATION_ENGINE:
+            try:
+                from app.simulation.simulation_engine import record_simulation_run
+                from app.simulation.simulation_decay_engine import decay_simulation_memory
+                from app.simulation.simulation_pruner import prune_simulation_memory
+                from app.simulation.world_state_compressor import compress_current_world_state
+                from app.config import SIMULATION_PRUNE_INTERVAL
+                from app.retrieval.memory_metrics import get_total_queries
+                
+                success = "not available" not in final_answer.lower()
+                score = 1.0 if success else 0.0
+                
+                current_state = compress_current_world_state()
+                initial_state_id = current_state.world_state_id
+                final_state_id = f"ws_final_{uuid.uuid4().hex[:8]}"
+                
+                record_simulation_run(
+                    initial_state_id=initial_state_id,
+                    final_state_id=final_state_id,
+                    scenario_chain=[],
+                    score=score,
+                    planner_trace_ids=["planner"],
+                    agent_ids=["planner", "retrieval", "kg", "learning", "vqa", "grounding", "critic"],
+                    tool_ids=vqa_res.get("executed_tools", []) or []
+                )
+                
+                decay_simulation_memory()
+                
+                tq = get_total_queries()
+                if tq > 0 and tq % SIMULATION_PRUNE_INTERVAL == 0:
+                    prune_simulation_memory()
+            except Exception as e:
+                print(f"[SWARM SIMULATION] Error during simulation storage: {e}")
         
+        supporting_modalities = list(set([e.get("modality", "text") for e in ret_evidence])) or ["text"]
+
         return {
             "answer": final_answer,
             "confidence": "High" if consensus_score >= 0.70 else "Medium",
@@ -160,6 +281,7 @@ class SwarmManager:
             "sources": citations,
             "evidence": ret_evidence,
             "why_this_answer": why_this_answer,
+            "supporting_modalities": supporting_modalities,
             "explanation": explanation,
             "swarm_history": history,
             "debug_details": {

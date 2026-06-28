@@ -33,7 +33,15 @@ from app.retrieval.memory_metrics import increment_query, increment_hit, increme
 from app.config import (
     ENABLE_MEMORY, ENABLE_AGENTIC_RAG, ENABLE_TRACE_CACHE, ENABLE_AGENT_EXPLANATIONS,
     ENABLE_KNOWLEDGE_GRAPH, ENABLE_TEMPORAL_EDGES, GRAPH_PRUNE_INTERVAL,
-    ENABLE_SELF_LEARNING, ENABLE_PATTERN_PRUNER, PATTERN_PRUNE_INTERVAL
+    ENABLE_SELF_LEARNING, ENABLE_PATTERN_PRUNER, PATTERN_PRUNE_INTERVAL,
+    ENABLE_EPISODIC_MEMORY, ENABLE_SIMULATION_ENGINE,
+    ENABLE_TOOL_LEARNING, ENABLE_META_REFLECTION, ENABLE_PLANNER_POLICIES,
+    ENABLE_POLICY_REPLAY, ENABLE_STRATEGY_MEMORY, ENABLE_POLICY_COMPRESSION,
+    ENABLE_POLICY_REINFORCEMENT, ENABLE_TOOL_FAILURE_TRACKING, ENABLE_META_EXPLANATIONS,
+    ENABLE_POLICY_DECAY, ENABLE_POLICY_PRUNER, ENABLE_POLICY_CACHE,
+    ENABLE_POLICY_MIGRATIONS, ENABLE_POLICY_ARCHIVES, ENABLE_POLICY_SIMILARITY_CACHE,
+    ENABLE_CONFIDENCE_CALIBRATION, ENABLE_FAILURE_GRAPH_ISOLATION,
+    ENABLE_HUMAN_PREFERENCES
 )
 
 # Knowledge Graph imports
@@ -277,8 +285,13 @@ def is_meta_query(query: str) -> bool:
 def answer_query(query: str, session_id: str = "default_session") -> dict:
     """
     Orchestrates execution of the RAG pipeline.
-    Supports either the standard multi-turn memory flow or the Milestone 10 Agentic RAG flow.
+    Enforces the structured sequence:
+    Memory -> Learning -> Episodes -> Experience Replay -> World State Builder -> Simulation Engine -> Policy Simulation -> Branch Ranking -> Planner -> Swarm -> Retrieval -> Grounding
     """
+    # Run privacy filter firewall
+    from app.personality.privacy_filter_engine import filter_sensitive_info
+    query, was_filtered = filter_sensitive_info(query)
+
     # Route execution to Swarm Coordinator if enabled
     from app.config import ENABLE_MULTI_AGENT_SWARM
     if ENABLE_MULTI_AGENT_SWARM:
@@ -291,6 +304,28 @@ def answer_query(query: str, session_id: str = "default_session") -> dict:
         
         # 1. Resolve pronouns in query using history (fast resolved query)
         resolved_query = resolve_followup(query, session_id) if ENABLE_MEMORY else query
+        
+        # Get personality context
+        personality_context = None
+        selected_personality = "concise engineer"
+        if ENABLE_HUMAN_PREFERENCES:
+            try:
+                from app.personality.personality_retriever import get_relevant_preferences
+                from app.personality.personality_optimizer import select_adaptive_personality
+                from app.personality.adaptive_personality_engine import get_or_create_personality
+                
+                relevant_prefs = [p[0] for p in get_relevant_preferences(resolved_query)]
+                selected_personality = select_adaptive_personality(resolved_query)
+                pers_node = get_or_create_personality(selected_personality)
+                
+                personality_context = {
+                    "preferences": relevant_prefs,
+                    "selected_personality": selected_personality,
+                    "speaking_patterns": pers_node.speaking_patterns if pers_node else [],
+                    "explanation_preferences": pers_node.explanation_preferences if pers_node else []
+                }
+            except Exception as e:
+                print(f"[PIPELINE PERSONALITY] Error: {e}")
         
         # 2. Check Trace Cache (Step 12) for repeated queries
         cached_trace = get_cached_trace(session_id, resolved_query) if ENABLE_TRACE_CACHE else None
@@ -316,6 +351,53 @@ def answer_query(query: str, session_id: str = "default_session") -> dict:
                 # Return standard formatted response payload
                 return results
                 
+        # Simulation, Hypothesis & Scenario Generation
+        simulation_context = None
+        current_state = None
+        if ENABLE_SIMULATION_ENGINE:
+            try:
+                from app.simulation.simulation_retriever import retrieve_simulation_context
+                from app.simulation.hypothesis_engine import generate_hypothesis
+                from app.simulation.scenario_generator import generate_scenario_branch
+                from app.simulation.world_state_compressor import compress_current_world_state
+                
+                simulation_context = retrieve_simulation_context(resolved_query)
+                
+                if "what if" in resolved_query.lower() or "suppose" in resolved_query.lower() or "if" in resolved_query.lower():
+                    generate_hypothesis(
+                        description=resolved_query,
+                        supporting_entities=[]
+                    )
+                
+                current_state = compress_current_world_state()
+                generate_scenario_branch(
+                    parent_state_id=current_state.world_state_id,
+                    summary=f"Simulated execution path for query: {resolved_query[:40]}...",
+                    success_probability=0.9,
+                    risk_score=0.1,
+                    importance_score=0.7
+                )
+            except Exception as e:
+                print(f"[PIPELINE SIMULATION] Error in pre-execution simulation: {e}")
+
+        # Policy Replay & Planner Optimizer
+        selected_planner = "ReAct"
+        replays = []
+        if ENABLE_POLICY_REPLAY:
+            try:
+                from app.meta.policy_replay_engine import get_replays_ranked
+                replays = get_replays_ranked(resolved_query)
+            except Exception as e:
+                print(f"[PIPELINE META] Error getting replays: {e}")
+                
+        if ENABLE_PLANNER_POLICIES:
+            try:
+                from app.meta.planner_optimizer import select_planner
+                selected_planner = select_planner(resolved_query)
+                print(f"[PIPELINE META] Optimizer selected planner: {selected_planner}")
+            except Exception as e:
+                print(f"[PIPELINE META] Error optimizing planner: {e}")
+
         # 3. Goal Detection
         goal_node = classify_and_detect_goal(resolved_query)
         
@@ -379,6 +461,26 @@ def answer_query(query: str, session_id: str = "default_session") -> dict:
         if ENABLE_SELF_LEARNING:
             learning_context = retrieve_learning_context(resolved_query)
             
+        # Retrieve Episodic Memory context
+        episodic_context = None
+        if ENABLE_EPISODIC_MEMORY:
+            from app.episodic.episodic_retriever import retrieve_episodic_context
+            episodic_context = retrieve_episodic_context(resolved_query)
+            
+        # Retrieve Simulation context
+        if ENABLE_SIMULATION_ENGINE and simulation_context is None:
+            from app.simulation.simulation_retriever import retrieve_simulation_context
+            simulation_context = retrieve_simulation_context(resolved_query)
+            
+        # Retrieve Meta context
+        meta_context = None
+        if ENABLE_PLANNER_POLICIES or ENABLE_TOOL_LEARNING:
+            try:
+                from app.meta.meta_retriever import retrieve_meta_context
+                meta_context = retrieve_meta_context(resolved_query)
+            except Exception as e:
+                print(f"[PIPELINE META] Error retrieving meta context: {e}")
+
         # 10. Context Builder (Incorporate goal details, plans, observations, and contexts)
         context = build_context(
             ranked_evidence=compressed_evidence,
@@ -389,7 +491,11 @@ def answer_query(query: str, session_id: str = "default_session") -> dict:
             plan=plan_node,
             observations=observations,
             kg_context=kg_context,
-            learning_context=learning_context
+            learning_context=learning_context,
+            episodic_context=episodic_context,
+            simulation_context=simulation_context,
+            meta_context=meta_context,
+            personality_context=personality_context
         )
         
         # 11. LLM Generation
@@ -439,9 +545,123 @@ def answer_query(query: str, session_id: str = "default_session") -> dict:
         
         # 14. Explainability compilation without raw chain-of-thought leakage
         if ENABLE_AGENT_EXPLANATIONS:
-            response["explanation"] = generate_agent_explanation(
+            agent_expl = generate_agent_explanation(
                 goal_node, plan_node, executed_tools, observations, reflections, citations
             )
+            if ENABLE_HUMAN_PREFERENCES:
+                try:
+                    from app.personality.personality_explanation_engine import compile_personality_explanation
+                    pers_expl = compile_personality_explanation(
+                        preference_applied=True,
+                        personality_type=selected_personality
+                    )
+                    if pers_expl:
+                        agent_expl = pers_expl + "\n" + agent_expl
+                except Exception as e:
+                    print(f"[PIPELINE PERSONALITY] Error compiling explanation: {e}")
+            if ENABLE_META_EXPLANATIONS:
+                try:
+                    from app.meta.meta_explanation_engine import compile_meta_explanation
+                    from app.meta.meta_store import get_policies
+                    meta_expl = compile_meta_explanation(replays, get_policies())
+                    if meta_expl:
+                        agent_expl = meta_expl + "\n" + agent_expl
+                except Exception as e:
+                    print(f"[PIPELINE META] Explanation compilation error: {e}")
+            if ENABLE_EPISODIC_MEMORY and episodic_context:
+                from app.episodic.episodic_explanation_engine import compile_episodic_explanation
+                epis_expl = compile_episodic_explanation(episodic_context.get("replays", []))
+                if epis_expl:
+                    agent_expl = epis_expl + "\n" + agent_expl
+            response["explanation"] = agent_expl
+            
+        # Evolve long-term episodic memory
+        if ENABLE_EPISODIC_MEMORY:
+            try:
+                from app.episodic.episode_builder import build_and_store_episode
+                from app.episodic.temporal_memory_engine import update_temporal_chains
+                from app.episodic.episode_cluster_engine import cluster_episode
+                from app.episodic.experience_replay_engine import record_replay
+                from app.episodic.memory_decay_engine import decay_episodic_memory
+                from app.episodic.memory_pruner import prune_episodic_memory
+                from app.config import ENABLE_MEMORY_DECAY, ENABLE_MEMORY_PRUNER, EPISODE_PRUNE_INTERVAL
+                
+                success = (len(reflections) == 0) or ("not available" not in final_answer.lower())
+                
+                ep_node, exp_node = build_and_store_episode(
+                    query=query,
+                    answer=final_answer,
+                    confidence_label_or_score=trace_score,
+                    grounding_report=grounding_report,
+                    user_signal=1.0,
+                    experience_type="agentic_rag",
+                    supporting_evidence_ids=[getattr(n, "evidence_id", None) or n.get("evidence_id") for n in filtered_evidence if (getattr(n, "evidence_id", None) or n.get("evidence_id"))],
+                    planner_trace_ids=[plan_node.plan_id] if plan_node else [],
+                    tools_used=executed_tools,
+                    observation_ids=[getattr(o, "observation_id", None) or o.get("observation_id") for o in observations if (getattr(o, "observation_id", None) or o.get("observation_id"))],
+                    reflection_ids=[getattr(r, "reflection_id", None) or r.get("reflection_id") for r in reflections if (getattr(r, "reflection_id", None) or r.get("reflection_id"))],
+                    success_status=success,
+                    execution_latency=(time.time() - t_agent_start) * 1000.0
+                )
+                
+                if ep_node:
+                    update_temporal_chains(ep_node)
+                    cluster_episode(ep_node)
+                    
+                    # Record reinforcement replays
+                    for old_ep in episodic_context.get("episodes", []):
+                        record_replay(old_ep.episode_id, ep_node.episode_id, 0.9, 1.0)
+                        
+                if ENABLE_MEMORY_DECAY:
+                    decay_episodic_memory()
+                    
+                if ENABLE_MEMORY_PRUNER and get_total_queries() > 0 and get_total_queries() % EPISODE_PRUNE_INTERVAL == 0:
+                    prune_episodic_memory()
+            except Exception as e:
+                print(f"[PIPELINE EPISODIC] Error during episodic memory storage: {e}")
+            
+        # Simulation explainability integration
+        if ENABLE_SIMULATION_ENGINE and ENABLE_AGENT_EXPLANATIONS:
+            try:
+                from app.simulation.simulation_explanation_engine import compile_simulation_explanation
+                from app.simulation.simulation_store import get_scenarios, get_failure_forecasts
+                sim_expl = compile_simulation_explanation(get_scenarios(), get_failure_forecasts())
+                if sim_expl:
+                    response["explanation"] = sim_expl + "\n" + response.get("explanation", "")
+            except Exception as e:
+                print(f"[PIPELINE SIMULATION] Error generating explanation: {e}")
+
+        # Simulation database updates, decay, and pruner
+        if ENABLE_SIMULATION_ENGINE:
+            try:
+                from app.simulation.simulation_engine import record_simulation_run
+                from app.simulation.simulation_decay_engine import decay_simulation_memory
+                from app.simulation.simulation_pruner import prune_simulation_memory
+                from app.config import SIMULATION_PRUNE_INTERVAL
+                
+                success_status = (len(reflections) == 0) or ("not available" not in final_answer.lower())
+                score = 1.0 if success_status else 0.0
+                
+                initial_state_id = current_state.world_state_id if current_state else "ws_init"
+                final_state_id = f"ws_final_{uuid.uuid4().hex[:8]}"
+                
+                record_simulation_run(
+                    initial_state_id=initial_state_id,
+                    final_state_id=final_state_id,
+                    scenario_chain=[],
+                    score=score,
+                    planner_trace_ids=[plan_node.plan_id] if plan_node else [],
+                    agent_ids=["planner"],
+                    tool_ids=executed_tools
+                )
+                
+                decay_simulation_memory()
+                
+                tq = get_total_queries()
+                if tq > 0 and tq % SIMULATION_PRUNE_INTERVAL == 0:
+                    prune_simulation_memory()
+            except Exception as e:
+                print(f"[PIPELINE SIMULATION] Error in post-execution updates: {e}")
             
         # Update trace cache & memory nodes
         success = (len(reflections) == 0) or ("not available" not in final_answer.lower())
@@ -584,7 +804,76 @@ def answer_query(query: str, session_id: str = "default_session") -> dict:
                     prune_learning_memory()
             except Exception as e:
                 print(f"[LEARNING PIPELINE] Error updating self-learning: {e}")
+        # Meta-Cognition updates
+        success_turn = (len(reflections) == 0) and ("not available" not in final_answer.lower())
         
+        if ENABLE_META_REFLECTION:
+            try:
+                from app.meta.meta_reflection_engine import generate_meta_reflection
+                generate_meta_reflection(
+                    query=query,
+                    success=success_turn,
+                    tool_sequence=executed_tools,
+                    latency_ms=(time.time() - t_agent_start) * 1000.0,
+                    plan_steps=len(tasks),
+                    evidence_count=len(filtered_evidence)
+                )
+            except Exception as e:
+                print(f"[PIPELINE META] Error in meta reflection: {e}")
+                
+        if ENABLE_TOOL_LEARNING:
+            try:
+                from app.meta.tool_learning_engine import record_tool_execution
+                from app.meta.tool_failure_engine import record_tool_failure
+                for tool in executed_tools:
+                    record_tool_execution(
+                        tool_name=tool,
+                        success=success_turn,
+                        latency_ms=150.0,
+                        confidence=trace_score if 'trace_score' in locals() else 1.0
+                    )
+                    if not success_turn:
+                        record_tool_failure(tool_name=tool, failure_type="pipeline_outcome_failure")
+            except Exception as e:
+                print(f"[PIPELINE META] Error in tool learning update: {e}")
+                
+        if ENABLE_PLANNER_POLICIES:
+            try:
+                from app.meta.planner_policy_engine import record_policy_run
+                from app.meta.policy_failure_engine import record_policy_failure
+                policy_id = plan_node.plan_id if plan_node else f"pol_{uuid.uuid4().hex[:8]}"
+                record_policy_run(
+                    policy_id=policy_id,
+                    planner_type=selected_planner,
+                    tool_sequence=executed_tools,
+                    intent_type=goal_node.goal_type if goal_node else "general",
+                    entities=list(get_node_entities(resolved_query)),
+                    success=success_turn,
+                    latency_ms=(time.time() - t_agent_start) * 1000.0,
+                    confidence=trace_score if 'trace_score' in locals() else 1.0
+                )
+                if not success_turn:
+                    record_policy_failure(policy_id=policy_id, failure_reason="pipeline_outcome_failure")
+            except Exception as e:
+                print(f"[PIPELINE META] Error in policy engine update: {e}")
+                
+        if ENABLE_POLICY_DECAY:
+            try:
+                from app.meta.policy_decay_engine import decay_meta_memory
+                decay_meta_memory()
+            except Exception as e:
+                print(f"[PIPELINE META] Error running meta decay: {e}")
+                
+        if ENABLE_POLICY_PRUNER:
+            try:
+                from app.meta.policy_pruner import prune_meta_memory
+                from app.config import POLICY_PRUNE_INTERVAL
+                tq = get_total_queries()
+                if tq > 0 and tq % POLICY_PRUNE_INTERVAL == 0:
+                    prune_meta_memory()
+            except Exception as e:
+                print(f"[PIPELINE META] Error running meta pruner: {e}")
+
         # Update debug metrics
         _latest_agent_debug = {
             "goal": goal_node,
@@ -601,6 +890,26 @@ def answer_query(query: str, session_id: str = "default_session") -> dict:
         record_latency((t_agent_end - t_agent_start) * 1000.0)
         increment_query()
         
+        # Post-execution reinforcement and decay
+        if ENABLE_HUMAN_PREFERENCES:
+            try:
+                from app.personality.personality_store import get_preferences
+                from app.personality.preference_drift_engine import detect_preference_drift
+                prefs = get_preferences()
+                old_pref = prefs[0].tone_preference if prefs else "default"
+                detect_preference_drift(old_pref, resolved_query)
+                
+                from app.personality.personality_reinforcement_engine import reinforce_personality
+                reinforce_personality(selected_personality, success=success_turn)
+                
+                from app.personality.personality_pruner import increment_query_counter
+                increment_query_counter()
+                
+                from app.personality.personality_decay_engine import decay_personality_memory
+                decay_personality_memory()
+            except Exception as e:
+                print(f"[PIPELINE PERSONALITY] Post-execution error: {e}")
+
         return response
         
     else:
@@ -608,6 +917,29 @@ def answer_query(query: str, session_id: str = "default_session") -> dict:
         t_mem_start = time.time()
         increment_query()
         resolved_query = resolve_followup(query, session_id) if ENABLE_MEMORY else query
+        
+        # Retrieve personality context for fallback
+        personality_context = None
+        selected_personality = "concise engineer"
+        if ENABLE_HUMAN_PREFERENCES:
+            try:
+                from app.personality.personality_retriever import get_relevant_preferences
+                from app.personality.personality_optimizer import select_adaptive_personality
+                from app.personality.adaptive_personality_engine import get_or_create_personality
+                
+                relevant_prefs = [p[0] for p in get_relevant_preferences(resolved_query)]
+                selected_personality = select_adaptive_personality(resolved_query)
+                pers_node = get_or_create_personality(selected_personality)
+                
+                personality_context = {
+                    "preferences": relevant_prefs,
+                    "selected_personality": selected_personality,
+                    "speaking_patterns": pers_node.speaking_patterns if pers_node else [],
+                    "explanation_preferences": pers_node.explanation_preferences if pers_node else []
+                }
+            except Exception as e:
+                print(f"[PIPELINE PERSONALITY] Error retrieving personalization data in fallback: {e}")
+
         if resolved_query != query:
             increment_hit()
             
@@ -635,13 +967,28 @@ def answer_query(query: str, session_id: str = "default_session") -> dict:
         if ENABLE_SELF_LEARNING:
             learning_context = retrieve_learning_context(resolved_query)
             
+        # Retrieve Episodic Memory context
+        episodic_context = None
+        if ENABLE_EPISODIC_MEMORY:
+            from app.episodic.episodic_retriever import retrieve_episodic_context
+            episodic_context = retrieve_episodic_context(resolved_query)
+            
+        # Retrieve Simulation context
+        simulation_context = None
+        if ENABLE_SIMULATION_ENGINE:
+            from app.simulation.simulation_retriever import retrieve_simulation_context
+            simulation_context = retrieve_simulation_context(resolved_query)
+
         context = build_context(
             compressed_evidence, 
             resolved_query, 
             session_id=session_id if ENABLE_MEMORY else None, 
             memory_nodes=ranked_memories,
             kg_context=kg_context,
-            learning_context=learning_context
+            learning_context=learning_context,
+            episodic_context=episodic_context,
+            simulation_context=simulation_context,
+            personality_context=personality_context
         )
         
         raw_answer = ollama_client.generate_response(query=resolved_query, context=context)
@@ -763,8 +1110,95 @@ def answer_query(query: str, session_id: str = "default_session") -> dict:
                     prune_learning_memory()
             except Exception as e:
                 print(f"[LEARNING PIPELINE] Error updating self-learning: {e}")
-        
-        return {
+                
+        # Evolve episodic memory
+        if ENABLE_EPISODIC_MEMORY:
+            try:
+                from app.episodic.episode_builder import build_and_store_episode
+                from app.episodic.temporal_memory_engine import update_temporal_chains
+                from app.episodic.episode_cluster_engine import cluster_episode
+                from app.episodic.experience_replay_engine import record_replay
+                from app.episodic.memory_decay_engine import decay_episodic_memory
+                from app.episodic.memory_pruner import prune_episodic_memory
+                from app.config import ENABLE_MEMORY_DECAY, ENABLE_MEMORY_PRUNER, EPISODE_PRUNE_INTERVAL
+                
+                success = "not available" not in final_answer.lower()
+                
+                ep_node, exp_node = build_and_store_episode(
+                    query=query,
+                    answer=final_answer,
+                    confidence_label_or_score=final_confidence_score,
+                    grounding_report=grounding_report,
+                    user_signal=1.0,
+                    experience_type="standard_rag",
+                    supporting_evidence_ids=[getattr(n, "evidence_id", None) or n.get("evidence_id") for n in filtered_evidence if (getattr(n, "evidence_id", None) or n.get("evidence_id"))],
+                    success_status=success,
+                    execution_latency=(time.time() - t_mem_start) * 1000.0
+                )
+                
+                if ep_node:
+                    update_temporal_chains(ep_node)
+                    cluster_episode(ep_node)
+                    
+                    # Record reinforcement replays
+                    for old_ep in episodic_context.get("episodes", []):
+                        record_replay(old_ep.episode_id, ep_node.episode_id, 0.9, 1.0)
+                        
+                if ENABLE_MEMORY_DECAY:
+                    decay_episodic_memory()
+                    
+                if ENABLE_MEMORY_PRUNER and get_total_queries() > 0 and get_total_queries() % EPISODE_PRUNE_INTERVAL == 0:
+                    prune_episodic_memory()
+            except Exception as e:
+                print(f"[PIPELINE FALLBACK EPISODIC] Error during episodic memory storage: {e}")
+                
+        # Simulation explainability integration
+        if ENABLE_SIMULATION_ENGINE:
+            try:
+                from app.simulation.simulation_explanation_engine import compile_simulation_explanation
+                from app.simulation.simulation_store import get_scenarios, get_failure_forecasts
+                sim_expl = compile_simulation_explanation(get_scenarios(), get_failure_forecasts())
+            except Exception as e:
+                print(f"[PIPELINE SIMULATION] Error generating explanation: {e}")
+                sim_expl = ""
+
+        # Simulation database updates, decay, and pruner
+        if ENABLE_SIMULATION_ENGINE:
+            try:
+                from app.simulation.simulation_engine import record_simulation_run
+                from app.simulation.simulation_decay_engine import decay_simulation_memory
+                from app.simulation.simulation_pruner import prune_simulation_memory
+                from app.simulation.world_state_compressor import compress_current_world_state
+                from app.config import SIMULATION_PRUNE_INTERVAL
+                
+                success_status = "not available" not in final_answer.lower()
+                score = 1.0 if success_status else 0.0
+                
+                # Compress world state on fallback too
+                current_state = compress_current_world_state()
+                initial_state_id = current_state.world_state_id
+                final_state_id = f"ws_final_{uuid.uuid4().hex[:8]}"
+                
+                record_simulation_run(
+                    initial_state_id=initial_state_id,
+                    final_state_id=final_state_id,
+                    scenario_chain=[],
+                    score=score,
+                    planner_trace_ids=[],
+                    agent_ids=[],
+                    tool_ids=[]
+                )
+                
+                decay_simulation_memory()
+                
+                tq = get_total_queries()
+                if tq > 0 and tq % SIMULATION_PRUNE_INTERVAL == 0:
+                    prune_simulation_memory()
+            except Exception as e:
+                print(f"[PIPELINE SIMULATION] Error in post-execution updates: {e}")
+                
+        # Inject explanation to response if episodic/simulation explanations are enabled
+        payload = {
             "answer": final_answer,
             "resolved_query": resolved_query,
             "session_id": session_id,
@@ -783,3 +1217,48 @@ def answer_query(query: str, session_id: str = "default_session") -> dict:
                 "compressed_context_size": len(context)
             }
         }
+        explanation = ""
+        if ENABLE_HUMAN_PREFERENCES:
+            try:
+                from app.personality.personality_explanation_engine import compile_personality_explanation
+                pers_expl = compile_personality_explanation(
+                    preference_applied=True,
+                    personality_type=selected_personality
+                )
+                if pers_expl:
+                    explanation = pers_expl + "\n"
+            except Exception as e:
+                print(f"[PIPELINE PERSONALITY] Error compiling fallback explanation: {e}")
+
+        if ENABLE_EPISODIC_MEMORY and episodic_context:
+            from app.episodic.episodic_explanation_engine import compile_episodic_explanation
+            epis_expl = compile_episodic_explanation(episodic_context.get("replays", []))
+            if epis_expl:
+                explanation += epis_expl + "\n"
+        if ENABLE_SIMULATION_ENGINE and 'sim_expl' in locals() and sim_expl:
+            explanation = sim_expl + "\n" + explanation
+            
+        if explanation:
+            payload["explanation"] = explanation
+
+        # Post-execution reinforcement and decay for fallback
+        if ENABLE_HUMAN_PREFERENCES:
+            try:
+                from app.personality.personality_store import get_preferences
+                from app.personality.preference_drift_engine import detect_preference_drift
+                prefs = get_preferences()
+                old_pref = prefs[0].tone_preference if prefs else "default"
+                detect_preference_drift(old_pref, resolved_query)
+                
+                from app.personality.personality_reinforcement_engine import reinforce_personality
+                reinforce_personality(selected_personality, success=success)
+                
+                from app.personality.personality_pruner import increment_query_counter
+                increment_query_counter()
+                
+                from app.personality.personality_decay_engine import decay_personality_memory
+                decay_personality_memory()
+            except Exception as e:
+                print(f"[PIPELINE PERSONALITY] Post-execution error in fallback: {e}")
+
+        return payload

@@ -1,0 +1,1 @@
+# Meta Cognition package initialization

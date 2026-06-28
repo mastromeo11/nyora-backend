@@ -1,0 +1,13 @@
+# API Contract Validation Report
+- [x] `/health` (latency: 3.89ms) - PASS
+- [x] `/ui/dashboard` (latency: 1.95ms) - PASS
+- [x] `/ui/graphs` (latency: 4.37ms) - PASS
+- [x] `/ui/world-model` (latency: 27.31ms) - PASS
+- [x] `/ui/memory` (latency: 79.53ms) - PASS
+- [x] `/ui/simulations` (latency: 46.42ms) - PASS
+- [x] `/ui/policies` (latency: 6.03ms) - PASS
+- [x] `/ui/reflections` (latency: 0.91ms) - PASS
+- [x] `/ui/preferences` (latency: 5.04ms) - PASS
+- [x] `/ui/notifications` (latency: 0.75ms) - PASS
+- [x] `/ui/analytics` (latency: 0.74ms) - PASS
+- [x] `/ui/workspaces` (latency: 0.92ms) - PASS

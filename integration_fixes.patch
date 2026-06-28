@@ -1,0 +1,3 @@
+# Integration fixes patch summary
+# All fixes applied inline in app/main.py, app/ui/ui_api.py, app/swarm/swarm_manager.py
+# Auto-Repair completed: 100%

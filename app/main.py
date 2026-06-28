@@ -1,6 +1,7 @@
 import os
 import shutil
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.config import UPLOAD_DIR
 from app.database import db
@@ -11,6 +12,22 @@ from app.retrieval.image_retriever import retrieve_images
 from app.retrieval.fusion_retriever import retrieve_multimodal
 
 app = FastAPI(title="Offline Multimodal RAG Backend - Milestone 1")
+
+# Configure CORS Middleware for Lovable frontend integration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8080",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class QueryRequest(BaseModel):
     query: str
@@ -221,7 +238,7 @@ def query_unified_endpoint(req: QueryRequest):
         res = answer_query(req.query)
         # Exclude raw Pydantic EvidenceNode objects from standard JSON output
         # to ensure clean serializability (or serialize them into dicts)
-        serializable_evidence = [node.dict() for node in res["evidence"]]
+        serializable_evidence = [node.dict() if hasattr(node, "dict") else node for node in res.get("evidence", [])]
         res["evidence"] = serializable_evidence
         return res
     except Exception as e:
@@ -344,7 +361,7 @@ def chat_endpoint(req: ChatRequest):
         from app.retrieval.unified_pipeline import answer_query
         res = answer_query(req.query, session_id=req.session_id)
         # Convert raw EvidenceNode items in the list to serialized dicts
-        res["evidence"] = [node.dict() for node in res["evidence"]]
+        res["evidence"] = [node.dict() if hasattr(node, "dict") else node for node in res.get("evidence", [])]
         return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -434,7 +451,7 @@ def debug_memory_endpoint(session_id: str):
     try:
         from app.retrieval.memory_retriever import retrieve_memories
         nodes = retrieve_memories(session_id)
-        return [node.dict() for node in nodes]
+        return [node.dict() if hasattr(node, "dict") else node for node in nodes]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -917,4 +934,393 @@ def post_swarm_clear_endpoint():
         return {"status": "success", "message": "Cleared all multi-agent swarm state and history."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Milestone 14: Episodic Memory Endpoints ---
+
+@app.get("/episodes")
+def get_episodes_endpoint():
+    try:
+        from app.episodic.episodic_store import get_episodes
+        return [ep.model_dump() for ep in get_episodes()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/episodes/replays")
+def get_episodes_replays_endpoint():
+    try:
+        from app.episodic.episodic_store import get_replays
+        return [rep.model_dump() for rep in get_replays()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/episodes/chains")
+def get_episodes_chains_endpoint():
+    try:
+        from app.episodic.episodic_store import get_chains
+        return [ch.model_dump() for ch in get_chains()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/episodes/clusters")
+def get_episodes_clusters_endpoint():
+    try:
+        from app.episodic.episodic_store import get_clusters
+        return [cl.model_dump() for cl in get_clusters()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/episodes/cache")
+def get_episodes_cache_endpoint():
+    try:
+        from app.episodic.episodic_cache import get_episodic_cache_metrics
+        return get_episodic_cache_metrics()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/episodes/query")
+def post_episodes_query_endpoint(req: QueryRequest):
+    try:
+        from app.episodic.episodic_retriever import retrieve_episodic_context
+        res = retrieve_episodic_context(req.query, limit=req.limit)
+        return {
+            "episodes": [ep.model_dump() for ep in res["episodes"]],
+            "replays": [rep.model_dump() for rep in res["replays"]],
+            "chains": [ch.model_dump() for ch in res["chains"]],
+            "clusters": [cl.model_dump() for cl in res["clusters"]],
+            "summaries": [s.model_dump() for s in res["summaries"]]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/episodes/clear")
+def post_episodes_clear_endpoint():
+    try:
+        from app.episodic.episodic_store import clear_episodic_store
+        from app.episodic.episodic_cache import clear_all_episodic_caches
+        clear_episodic_store()
+        clear_all_episodic_caches()
+        return {"status": "success", "message": "Cleared all episodic memory state."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/debug/episodes")
+def debug_episodes_endpoint():
+    try:
+        from app.episodic.episodic_store import get_episodes
+        return [ep.model_dump() for ep in get_episodes()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/debug/replays")
+def debug_replays_endpoint():
+    try:
+        from app.episodic.episodic_store import get_replays
+        return [rep.model_dump() for rep in get_replays()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/debug/chains")
+def debug_chains_endpoint():
+    try:
+        from app.episodic.episodic_store import get_chains
+        return [ch.model_dump() for ch in get_chains()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/debug/clusters")
+def debug_clusters_endpoint():
+    try:
+        from app.episodic.episodic_store import get_clusters
+        return [cl.model_dump() for cl in get_clusters()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/debug/episodic-summary")
+def debug_episodic_summary_endpoint(chain_id: str):
+    try:
+        from app.episodic.episodic_store import get_chain_summaries
+        summaries = get_chain_summaries()
+        for s in summaries:
+            if s.chain_id == chain_id:
+                return s.model_dump()
+        raise HTTPException(status_code=404, detail="No summary found for chain_id")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Milestone 15: Simulation & World Model Endpoints ---
+
+@app.get("/world-states")
+def get_world_states_endpoint():
+    try:
+        from app.simulation.simulation_store import get_world_states
+        return [ws.model_dump() for ws in get_world_states()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/hypotheses")
+def get_hypotheses_endpoint():
+    try:
+        from app.simulation.simulation_store import get_hypotheses
+        return [h.model_dump() for h in get_hypotheses()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/scenarios")
+def get_scenarios_endpoint():
+    try:
+        from app.simulation.simulation_store import get_scenarios
+        return [sc.model_dump() for sc in get_scenarios()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/counterfactuals")
+def get_counterfactuals_endpoint():
+    try:
+        from app.simulation.simulation_store import get_counterfactuals
+        return [cf.model_dump() for cf in get_counterfactuals()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/simulations")
+def get_simulations_endpoint():
+    try:
+        from app.simulation.simulation_store import get_simulations
+        return [sim.model_dump() for sim in get_simulations()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/policies")
+def get_policies_endpoint():
+    try:
+        from app.config import ENABLE_PLANNER_POLICIES
+        if ENABLE_PLANNER_POLICIES:
+            from app.meta.meta_store import get_policies as get_meta_policies
+            return [p.model_dump() for p in get_meta_policies()]
+        from app.simulation.simulation_store import get_policies
+        return [p.model_dump() for p in get_policies()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/failure-forecasts")
+def get_failure_forecasts_endpoint():
+    try:
+        from app.simulation.simulation_store import get_failure_forecasts
+        return [f.model_dump() for f in get_failure_forecasts()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/simulation/cache")
+def get_simulation_cache_endpoint():
+    try:
+        from app.simulation.world_model_cache import get_cache_hit_rate
+        return {"hit_rate": get_cache_hit_rate()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/simulation/query")
+def post_simulation_query_endpoint(req: QueryRequest):
+    try:
+        from app.simulation.simulation_retriever import retrieve_simulation_context
+        res = retrieve_simulation_context(req.query)
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/simulation/clear")
+def post_simulation_clear_endpoint():
+    try:
+        from app.simulation.simulation_store import clear_simulation_store
+        from app.simulation.world_model_cache import clear_all_simulation_caches
+        clear_simulation_store()
+        clear_all_simulation_caches()
+        return {"status": "success", "message": "Cleared all simulation/world model state."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/debug/world-model")
+def debug_world_model_endpoint():
+    try:
+        from app.simulation.simulation_store import load_world_model_store
+        return load_world_model_store()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/policy-failures")
+def get_policy_failures_endpoint():
+    try:
+        from app.config import ENABLE_PLANNER_POLICIES
+        if ENABLE_PLANNER_POLICIES:
+            from app.meta.meta_store import get_policy_failures as get_meta_policy_failures
+            return [pf.model_dump() for pf in get_meta_policy_failures()]
+        from app.simulation.simulation_store import get_policy_failures
+        return [pf.model_dump() for pf in get_policy_failures()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/simulation-archives")
+def get_simulation_archives_endpoint():
+    try:
+        from app.simulation.simulation_store import get_simulation_archives
+        return [sa.model_dump() for sa in get_simulation_archives()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Milestone 16 REST endpoints ---
+
+@app.get("/tools")
+def get_tools_endpoint():
+    try:
+        from app.meta.meta_store import get_tools
+        return [t.model_dump() for t in get_tools()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/strategies")
+def get_strategies_endpoint():
+    try:
+        from app.meta.meta_store import get_strategies
+        return [s.model_dump() for s in get_strategies()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/reflections")
+def get_reflections_endpoint():
+    try:
+        from app.meta.meta_store import get_reflections
+        return [r.model_dump() for r in get_reflections()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/replays")
+def get_replays_endpoint():
+    try:
+        from app.meta.meta_store import get_replays
+        return [rep.model_dump() for rep in get_replays()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/tool-failures")
+def get_tool_failures_endpoint():
+    try:
+        from app.meta.meta_store import get_tool_failures
+        return [tf.model_dump() for tf in get_tool_failures()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/optimization-failures")
+def get_optimization_failures_endpoint():
+    try:
+        from app.meta.meta_store import get_optimization_failures
+        return [of.model_dump() for of in get_optimization_failures()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/policy-archives")
+def get_policy_archives_endpoint():
+    try:
+        from app.meta.meta_store import get_archives
+        return [pa.model_dump() for pa in get_archives()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/meta-archives")
+def get_meta_archives_endpoint():
+    try:
+        from app.meta.meta_store import get_meta_archives
+        return [ma.model_dump() for ma in get_meta_archives()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/meta/cache")
+def get_meta_cache_endpoint():
+    try:
+        from app.meta.policy_cache import tools_cache, policies_cache
+        return {
+            "tools_cache_size": len(tools_cache.cache),
+            "policies_cache_size": len(policies_cache.cache)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/meta/query")
+def post_meta_query_endpoint(req: QueryRequest):
+    try:
+        from app.meta.meta_retriever import retrieve_meta_context
+        res = retrieve_meta_context(req.query)
+        return {
+            "tools": [t.model_dump() for t in res["tools"]],
+            "policies": [p.model_dump() for p in res["policies"]],
+            "strategies": [s.model_dump() for s in res["strategies"]],
+            "reflections": [r.model_dump() for r in res["reflections"]],
+            "replays": [rep.model_dump() for rep in res["replays"]]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/meta/clear")
+def post_meta_clear_endpoint():
+    try:
+        from app.meta.meta_store import clear_meta_store
+        clear_meta_store()
+        return {"status": "success", "message": "Cleared all meta-cognition store."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/debug/meta")
+def get_debug_meta_endpoint():
+    try:
+        from app.meta.meta_store import load_meta_store
+        return load_meta_store()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/personality/preferences")
+def get_personality_preferences():
+    try:
+        from app.personality.personality_store import get_preferences
+        return [p.model_dump() for p in get_preferences()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/personality/failures")
+def get_personality_failures_endpoint():
+    try:
+        from app.personality.personality_store import get_personality_failures
+        return [f.model_dump() for f in get_personality_failures()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/personality/preference")
+def post_personality_preference(pref: dict):
+    try:
+        from app.personality.personality_models import HumanPreferenceNode
+        from app.personality.personality_store import append_preference
+        node = HumanPreferenceNode(**pref)
+        append_preference(node)
+        return {"status": "success", "preference": node.model_dump()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/personality/clear")
+def post_personality_clear():
+    try:
+        from app.personality.personality_store import clear_personality_store
+        clear_personality_store()
+        return {"status": "success", "message": "Cleared personality store."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/debug/personality")
+def get_debug_personality():
+    try:
+        from app.personality.personality_store import load_personality_store
+        return load_personality_store()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+from app.ui.ui_api import router as ui_router
+app.include_router(ui_router)
+
 

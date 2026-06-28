@@ -28,8 +28,13 @@ def ingest_file(file_path: str, filename: str) -> dict:
         return ingest_audio(file_path, filename)
     elif ext in [".png", ".jpg", ".jpeg"]:
         return ingest_image(file_path, filename)
+    elif ext == ".csv":
+        return ingest_csv(file_path, filename)
+    elif ext in [".md", ".txt"]:
+        return ingest_markdown(file_path, filename)
+    elif ext == ".json":
+        return ingest_json(file_path, filename)
     else:
-        # TODO: Implement placeholders for future milestones (CLIP/multimodal)
         return {
             "status": "warning",
             "message": f"Unsupported format: {ext}."
@@ -240,4 +245,107 @@ def ingest_image(file_path: str, filename: str) -> dict:
         return {
             "status": "error",
             "message": f"Image Ingestion failed: {str(e)}"
+        }
+
+def ingest_csv(file_path: str, filename: str) -> dict:
+    import csv
+    try:
+        ids = []
+        documents = []
+        metadatas = []
+        
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+            if not rows:
+                return {"status": "warning", "message": f"Empty CSV: {filename}"}
+                
+            header = rows[0]
+            for idx, row in enumerate(rows[1:]):
+                row_str = ", ".join([f"{h}: {val}" for h, val in zip(header, row)])
+                chunk_id = f"csv_{uuid.uuid4().hex}"
+                ids.append(chunk_id)
+                documents.append(row_str)
+                metadatas.append({
+                    "source": filename,
+                    "row_index": idx,
+                    "source_type": "csv"
+                })
+                
+        db.add_documents(ids=ids, documents=documents, metadatas=metadatas)
+        return {
+            "status": "success",
+            "chunks_added": len(ids)
+        }
+    except Exception as e:
+        print(f"Error during CSV ingestion: {e}")
+        return {
+            "status": "error",
+            "message": f"CSV ingestion failed: {str(e)}"
+        }
+
+def ingest_markdown(file_path: str, filename: str) -> dict:
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            text = f.read()
+        if not text.strip():
+            return {"status": "warning", "message": f"Empty markdown file: {filename}"}
+            
+        chunks = chunk_text(text)
+        ids = []
+        documents = []
+        metadatas = []
+        for idx, chunk in enumerate(chunks):
+            chunk_id = f"md_{uuid.uuid4().hex}"
+            ids.append(chunk_id)
+            documents.append(chunk)
+            metadatas.append({
+                "source": filename,
+                "chunk_index": idx,
+                "source_type": "markdown"
+            })
+            
+        db.add_documents(ids=ids, documents=documents, metadatas=metadatas)
+        return {
+            "status": "success",
+            "chunks_added": len(ids)
+        }
+    except Exception as e:
+        print(f"Error during Markdown ingestion: {e}")
+        return {
+            "status": "error",
+            "message": f"Markdown ingestion failed: {str(e)}"
+        }
+
+def ingest_json(file_path: str, filename: str) -> dict:
+    import json
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            data = json.load(f)
+            
+        text = json.dumps(data, indent=2)
+        chunks = chunk_text(text)
+        ids = []
+        documents = []
+        metadatas = []
+        for idx, chunk in enumerate(chunks):
+            chunk_id = f"json_{uuid.uuid4().hex}"
+            ids.append(chunk_id)
+            documents.append(chunk)
+            metadatas.append({
+                "source": filename,
+                "chunk_index": idx,
+                "source_type": "json"
+            })
+            
+        db.add_documents(ids=ids, documents=documents, metadatas=metadatas)
+        return {
+            "status": "success",
+            "chunks_added": len(ids)
+        }
+    except Exception as e:
+        print(f"Error during JSON ingestion: {e}")
+        return {
+            "status": "error",
+            "message": f"JSON ingestion failed: {str(e)}"
         }
